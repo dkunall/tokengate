@@ -166,7 +166,7 @@ public class GeminiProvider extends HttpChatProvider {
     private static String partsText(JsonNode candidate) {
         StringBuilder sb = new StringBuilder();
         for (JsonNode part : candidate.path("content").path("parts")) {
-            if (part.has("text")) {
+            if (part.has("text") && !part.path("thought").asBoolean(false)) {
                 sb.append(part.get("text").asText());
             }
         }
@@ -177,7 +177,9 @@ public class GeminiProvider extends HttpChatProvider {
         if (u == null || u.isMissingNode()) {
             return null;
         }
-        return new TokenUsage(u.path("promptTokenCount").asLong(0), u.path("candidatesTokenCount").asLong(0));
+        // Thinking models report reasoning separately in thoughtsTokenCount; Google bills it as output.
+        return new TokenUsage(u.path("promptTokenCount").asLong(0),
+                u.path("candidatesTokenCount").asLong(0) + u.path("thoughtsTokenCount").asLong(0));
     }
 
     static String finishReason(String reason) {
