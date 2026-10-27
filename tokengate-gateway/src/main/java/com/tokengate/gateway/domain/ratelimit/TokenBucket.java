@@ -4,7 +4,7 @@ import java.time.Duration;
 
 /**
  * Lazy-refill token bucket: no timer, the refill since the last call is added when someone asks. This is the
- * in-process version and the reference the Redis Lua script (ratelimit.lua) is tested against; the
+ * in-process version and the reference the Redis Lua script (redis/token_bucket.lua) is tested against; the
  * arithmetic is the same.
  */
 public final class TokenBucket {
