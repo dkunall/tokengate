@@ -1,0 +1,27 @@
+target/
+*.class
+dependency-reduced-pom.xml
+
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+.DS_Store
+
+*.log
+logs/
+
+.env
+.env.*
+*.pem
+*.key
+
+# downloaded by scripts/fetch-model.sh, ~90 MB
+/models/
+
+# scripts/local.sh runtime state
+/.run/
+node_modules/
