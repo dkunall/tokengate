@@ -22,6 +22,10 @@ class RetryPolicyTest {
         assertThat(policy.shouldRetry(FailureKind.BAD_REQUEST, 1)).isFalse();
         assertThat(FailureKind.TIMEOUT.failover()).isTrue();
         assertThat(FailureKind.BAD_REQUEST.failover()).isFalse();
+        // a 404 means this provider lacks the model (Google retires models by answering 404), not that the
+        // client's request is bad, so another provider gets a try
+        assertThat(FailureKind.NOT_FOUND.failover()).isTrue();
+        assertThat(policy.shouldRetry(FailureKind.NOT_FOUND, 1)).isFalse();
     }
 
     @Test
@@ -31,6 +35,7 @@ class RetryPolicyTest {
         assertThat(FailureKind.fromHttpStatus(500)).isEqualTo(FailureKind.SERVER_ERROR);
         assertThat(FailureKind.fromHttpStatus(401)).isEqualTo(FailureKind.AUTH);
         assertThat(FailureKind.fromHttpStatus(400)).isEqualTo(FailureKind.BAD_REQUEST);
+        assertThat(FailureKind.fromHttpStatus(404)).isEqualTo(FailureKind.NOT_FOUND);
     }
 
     @Test

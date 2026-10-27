@@ -14,6 +14,8 @@ public enum FailureKind {
     TIMEOUT(false, true, true),
     SERVER_ERROR(false, true, true),
     AUTH(false, true, true),
+    /** 404: this provider doesn't have the model (retired or misconfigured). Another provider may, so fail over. */
+    NOT_FOUND(false, true, true),
     BAD_REQUEST(false, false, false),
     MIDSTREAM(false, false, true);
 
@@ -44,6 +46,7 @@ public enum FailureKind {
             case 429 -> RATE_LIMITED;
             case 503 -> UNAVAILABLE;
             case 401, 403 -> AUTH;
+            case 404 -> NOT_FOUND;
             case 504 -> TIMEOUT;
             default -> status >= 500 ? SERVER_ERROR : BAD_REQUEST;
         };

@@ -89,6 +89,17 @@ class ChatServiceTest {
     }
 
     @Test
+    void model_missing_at_one_provider_fails_over_without_a_retry() {
+        h.alpha.failNext(FailureKind.NOT_FOUND);
+
+        ChatResult r = service.complete(Harness.caller(), "r1", Harness.ask("hi", 0.0, false));
+
+        assertThat(r.provider()).isEqualTo("beta");
+        assertThat(h.alpha.calls).hasSize(1);
+        assertThat(r.attempts()).extracting(Attempt::describe).containsExactly("alpha:not_found", "beta:ok");
+    }
+
+    @Test
     void bad_request_is_neither_retried_nor_failed_over_and_the_reservation_is_released() {
         h.alpha.failNext(FailureKind.BAD_REQUEST);
 
