@@ -1,0 +1,173 @@
+server:
+  port: ${PORT:9080}
+  shutdown: graceful
+  tomcat:
+    max-connections: 4096
+    connection-timeout: 10s
+
+spring:
+  application:
+    name: tokengate-gateway
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  threads:
+    virtual:
+      enabled: true
+  mvc:
+    async:
+      request-timeout: 5m
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+  datasource:
+    url: ${TOKENGATE_DB_URL:jdbc:postgresql://localhost:55442/tokengate}
+    username: ${TOKENGATE_DB_USER:tokengate}
+    password: ${TOKENGATE_DB_PASSWORD:tokengate}
+    hikari:
+      maximum-pool-size: ${TOKENGATE_DB_POOL:20}
+      connection-timeout: 3000
+  flyway:
+    enabled: true
+  data:
+    redis:
+      host: ${TOKENGATE_REDIS_HOST:localhost}
+      port: ${TOKENGATE_REDIS_PORT:6390}
+      timeout: 500ms
+      connect-timeout: 1s
+  kafka:
+    bootstrap-servers: ${TOKENGATE_KAFKA:localhost:9094}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
+        max.block.ms: 3000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db,redis
+  health:
+    kafka:
+      enabled: false
+  metrics:
+    tags:
+      application: tokengate-gateway
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  tracing:
+    sampling:
+      probability: ${TOKENGATE_TRACE_SAMPLING:0.1}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.tokengate: INFO
+    # the OTLP exporter complains every few seconds when no collector is running
+    io.opentelemetry.exporter: ${TOKENGATE_OTLP_LOG_LEVEL:ERROR}
+
+tokengate:
+  routing:
+    default-completion-tokens: 256
+    max-attempts-per-provider: 2
+    backoff-base: 100ms
+    backoff-cap: 2s
+    breaker-window: 20
+    breaker-minimum-calls: 5
+    breaker-failure-rate: 0.5
+    breaker-open-for: 15s
+    hedge-after: ${TOKENGATE_HEDGE_AFTER:}
+    stream-idle-timeout: 20s
+    connect-timeout: 2s
+  cache:
+    l1-capacity: 10000
+    l1-ttl: 30s
+    semantic-purge-interval: 10m
+  embedding:
+    model-dir: ${TOKENGATE_EMBEDDING_MODEL_DIR:}
+    max-sequence-length: 256
+    threads: 2
+  security:
+    # The dev-only values below exist so the stack starts on a laptop. They are not secrets and a warning is
+    # logged at startup while they are in use; anything real must come from the environment.
+    pii-key: ${TOKENGATE_PII_KEY:dev-only-pii-key-0000000000000000000000}
+    api-key-pepper: ${TOKENGATE_API_KEY_PEPPER:dev-only-api-key-pepper-000000000000000}
+    api-key-cache-ttl: 30s
+    jwt:
+      issuer-uri: ${TOKENGATE_JWT_ISSUER_URI:}
+      hmac-secret: ${TOKENGATE_JWT_HMAC_SECRET:dev-only-jwt-hmac-secret-00000000000000}
+      issuer: tokengate-dev
+  usage:
+    topic: tokengate.usage.v1
+    outbox-interval: 1s
+    outbox-batch: 200
+    kafka-ack-timeout: 5s
+
+  # Prices are USD per 1K tokens. The mock prices are made up but in a realistic range so cost routing has
+  # something to choose between. Real providers are skipped unless their key is set in the environment.
+  providers:
+    - id: mock-alpha
+      type: MOCK
+      base-url: ${TOKENGATE_MOCK_URL:http://localhost:9082}/alpha/v1
+      weight: 70
+      priority: 1
+      timeout: 5s
+      embeddings: true
+      models:
+        "[gpt-4o-mini]": { native-model: mock-alpha-small, input-per1k: 0.00015, output-per1k: 0.0006 }
+        "[text-embedding-3-small]": { native-model: mock-alpha-embed, input-per1k: 0.00002, output-per1k: 0 }
+    - id: mock-beta
+      type: MOCK
+      base-url: ${TOKENGATE_MOCK_URL:http://localhost:9082}/beta/v1
+      weight: 30
+      priority: 2
+      timeout: 5s
+      models:
+        "[gpt-4o-mini]": { native-model: mock-beta-small, input-per1k: 0.0003, output-per1k: 0.0012 }
+    - id: openai
+      type: OPENAI
+      base-url: https://api.openai.com/v1
+      api-key: ${OPENAI_API_KEY:}
+      priority: 3
+      timeout: 60s
+      embeddings: true
+      models:
+        "[gpt-4o-mini]": { native-model: gpt-4o-mini, input-per1k: 0.00015, output-per1k: 0.0006 }
+        "[text-embedding-3-small]": { native-model: text-embedding-3-small, input-per1k: 0.00002, output-per1k: 0 }
+    - id: gemini
+      type: GEMINI
+      base-url: https://generativelanguage.googleapis.com
+      api-key: ${GEMINI_API_KEY:}
+      priority: 4
+      timeout: 60s
+      models:
+        "[gpt-4o-mini]": { native-model: gemini-2.0-flash, input-per1k: 0.0001, output-per1k: 0.0004 }
+    - id: anthropic
+      type: ANTHROPIC
+      base-url: https://api.anthropic.com
+      api-key: ${ANTHROPIC_API_KEY:}
+      priority: 5
+      timeout: 60s
+      models:
+        "[gpt-4o-mini]": { native-model: claude-3-5-haiku-latest, input-per1k: 0.0008, output-per1k: 0.004 }
