@@ -1,0 +1,141 @@
+# Infrastructure for local runs. Host ports are offset from the usual defaults on purpose so this can sit next to
+# other stacks on the same machine. The three Spring services run on the host (scripts/start.sh) or, with
+# `--profile apps`, as containers built from the jars in target/.
+name: tokengate
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: tg-postgres
+    environment:
+      POSTGRES_USER: tokengate
+      POSTGRES_PASSWORD: ${TOKENGATE_DB_PASSWORD:-tokengate}
+      POSTGRES_DB: tokengate
+    command: ["postgres", "-c", "shared_buffers=128MB", "-c", "max_connections=100"]
+    volumes:
+      - ./ops/postgres/init.sql:/docker-entrypoint-initdb.d/10-metering-db.sql:ro
+      - tg-pg:/var/lib/postgresql/data
+    ports: ["55442:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokengate -d tokengate"]
+      interval: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: tg-redis
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+    ports: ["6390:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: tg-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:9094,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_HEAP_OPTS: "-Xmx384m -Xms384m"
+    ports: ["9094:9094"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      retries: 30
+
+  kafka-init:
+    image: apache/kafka:3.8.0
+    container_name: tg-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
+        --topic tokengate.usage.v1 --partitions 3 --replication-factor 1
+        --config retention.ms=604800000
+    restart: "no"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: tg-prometheus
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=3d"]
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["9091:9090"]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: tg-grafana
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3300:3000"]
+    depends_on: [prometheus]
+
+  mock-provider:
+    profiles: ["apps"]
+    image: eclipse-temurin:21-jre-alpine
+    volumes: ["./tokengate-mock-provider/target/tokengate-mock-provider.jar:/app.jar:ro"]
+    command: ["java", "-Xmx256m", "-jar", "/app.jar"]
+    ports: ["9082:9082"]
+
+  gateway:
+    profiles: ["apps"]
+    image: eclipse-temurin:21-jre-alpine
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    environment:
+      TOKENGATE_DB_URL: jdbc:postgresql://postgres:5432/tokengate
+      TOKENGATE_REDIS_HOST: redis
+      TOKENGATE_REDIS_PORT: "6379"
+      TOKENGATE_KAFKA: kafka:9092
+      TOKENGATE_MOCK_URL: http://mock-provider:9082
+      TOKENGATE_EMBEDDING_MODEL_DIR: /models/all-MiniLM-L6-v2
+      TOKENGATE_PII_KEY: ${TOKENGATE_PII_KEY:-}
+      TOKENGATE_API_KEY_PEPPER: ${TOKENGATE_API_KEY_PEPPER:-}
+      TOKENGATE_JWT_HMAC_SECRET: ${TOKENGATE_JWT_HMAC_SECRET:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ./tokengate-gateway/target/tokengate-gateway.jar:/app.jar:ro
+      - ${TOKENGATE_MODELS_DIR:-./models}:/models:ro
+    command: ["java", "-Xmx512m", "-jar", "/app.jar"]
+    ports: ["9080:9080"]
+
+  metering:
+    profiles: ["apps"]
+    image: eclipse-temurin:21-jre-alpine
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    environment:
+      METERING_DB_URL: jdbc:postgresql://postgres:5432/tokengate_metering
+      METERING_KAFKA: kafka:9092
+      TOKENGATE_JWT_HMAC_SECRET: ${TOKENGATE_JWT_HMAC_SECRET:-}
+    volumes: ["./tokengate-metering/target/tokengate-metering.jar:/app.jar:ro"]
+    command: ["java", "-Xmx256m", "-jar", "/app.jar"]
+    ports: ["9081:9081"]
+
+volumes:
+  tg-pg:

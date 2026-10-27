@@ -46,6 +46,7 @@
     </dependencies>
 
     <build>
+        <finalName>tokengate-gateway</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

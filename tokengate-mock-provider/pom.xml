@@ -19,6 +19,7 @@
     </dependencies>
 
     <build>
+        <finalName>tokengate-mock-provider</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
