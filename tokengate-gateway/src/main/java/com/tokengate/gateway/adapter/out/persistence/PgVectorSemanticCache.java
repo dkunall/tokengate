@@ -32,13 +32,16 @@ public class PgVectorSemanticCache implements SemanticCacheStore {
     @Override
     public Optional<Hit> nearest(String tenantId, String contextKey, float[] embedding, double minSimilarity) {
         String vector = literal(embedding);
+        // The probe is parsed once in a CTE. Written inline as ?::vector, a generic prepared plan re-parses the
+        // 384-float literal for every candidate row; the k6 miss run caught it at ~230 ms for 3.8k rows.
         return jdbc.sql("""
-                select prompt, completion::text as completion, 1 - (embedding <=> ?::vector) as similarity
-                from semantic_cache
+                with probe as materialized (select ?::vector as v)
+                select prompt, completion::text as completion, 1 - (embedding <=> probe.v) as similarity
+                from semantic_cache, probe
                 where tenant_id = ? and context_key = ? and expires_at > ?
-                order by embedding <=> ?::vector
+                order by embedding <=> probe.v
                 limit 1""")
-                .params(vector, tenantId, contextKey, Timestamp.from(clock.instant()), vector)
+                .params(vector, tenantId, contextKey, Timestamp.from(clock.instant()))
                 .query((rs, n) -> new Hit(read(rs.getString("completion")), rs.getDouble("similarity"),
                         rs.getString("prompt")))
                 .optional()
