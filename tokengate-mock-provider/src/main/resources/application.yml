@@ -1,0 +1,38 @@
+server:
+  port: ${PORT:9082}
+  shutdown: graceful
+spring:
+  application:
+    name: tokengate-mock-provider
+  threads:
+    virtual:
+      enabled: true
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+mock:
+  seed: ${MOCK_SEED:}
+  upstreams:
+    alpha:
+      latency-ms: 120
+      jitter-ms: 30
+      error-rate: 0
+      error-status: 500
+      outage: false
+      chunk-delay-ms: 25
+      fail-mid-stream-after-chunks: -1
+      completion-tokens: 0
+    beta:
+      latency-ms: 40
+      jitter-ms: 10
+      error-rate: 0
+      error-status: 500
+      outage: false
+      chunk-delay-ms: 15
+      fail-mid-stream-after-chunks: -1
+      completion-tokens: 0

@@ -21,6 +21,7 @@
     <modules>
         <module>tokengate-common</module>
         <module>tokengate-arch-rules</module>
+        <module>tokengate-mock-provider</module>
         <module>tokengate-gateway</module>
     </modules>
 
