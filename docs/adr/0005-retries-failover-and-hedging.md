@@ -44,5 +44,5 @@ answered after the delay. Whichever answers first wins and the other call is can
 - In the demo outage (`/workspace/tokengate-run/demo-output.txt`), alpha returned 503 to everything. Each of the first five
   requests took 3 attempts: alpha, an alpha retry, then beta. That's 10 failures. Alpha's breaker window still held
   about 10 successes from earlier traffic, so the failure rate reached 50% of the last 20 calls only then, and the
-  breaker opened. Requests 6 to 8 went straight to beta with 1 attempt. On a fresh gateway, an earlier run opened the
-  breaker after the first request.
+  breaker opened. Requests 6 to 8 went straight to beta with 1 attempt. Before the k6 runs, the window had different
+  history, and the breaker was open by the second request.
