@@ -104,6 +104,9 @@ public class MicrometerGatewayMetrics implements GatewayMetrics {
         Gauge.builder("tokengate.breaker.state", state, s -> s.get().ordinal())
                 .description("0 closed, 1 half-open, 2 open")
                 .tag("provider", provider.value())
+                // the supplier is a lambda nobody else holds; with Micrometer's default weak reference it is
+                // collected and the gauge reads NaN
+                .strongReference(true)
                 .register(registry);
     }
 }
