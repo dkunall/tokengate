@@ -97,11 +97,13 @@ A few things I wrote myself instead of pulling in a library, mostly because I wa
 
 ## Tests
 
-`./mvnw -q verify` runs 201 tests. Besides unit tests there are 20 Testcontainers tests against real
-Postgres/pgvector, Redis and Kafka, 15 WireMock contract tests for the provider adapters, some concurrency
+`./mvnw -q verify` runs 207 tests. Besides unit tests there are 20 Testcontainers tests against real
+Postgres/pgvector, Redis and Kafka, 20 WireMock contract tests for the provider adapters, some concurrency
 tests on the token bucket, Lua scripts and invoice upserts, and ArchUnit checks on every service.
 
-The provider adapters have only been tested against recorded request/response formats, not with real keys.
+Gemini has been run against the real API once (2026-10-27), which found a retired model and a 404 that didn't
+fail over; see [docs/real-providers.md](docs/real-providers.md). OpenAI and Anthropic are still only tested
+against recorded formats.
 
 ## Benchmarks
 
