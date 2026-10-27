@@ -72,6 +72,14 @@
                         <trimStackTrace>false</trimStackTrace>
                         <!-- the box running this has ~2 GB free; keep forks small -->
                         <argLine>-Xmx512m -XX:+UseSerialGC</argLine>
+                        <!-- tests must never reach a real provider, even when a key is exported in the shell -->
+                        <excludedEnvironmentVariables>
+                            <excludedEnvironmentVariable>OPENAI_API_KEY</excludedEnvironmentVariable>
+                            <excludedEnvironmentVariable>GEMINI_API_KEY</excludedEnvironmentVariable>
+                            <excludedEnvironmentVariable>ANTHROPIC_API_KEY</excludedEnvironmentVariable>
+                            <excludedEnvironmentVariable>SPRING_CONFIG_ADDITIONAL_LOCATION</excludedEnvironmentVariable>
+                            <excludedEnvironmentVariable>TOKENGATE_GEMINI_CHAT_MODEL</excludedEnvironmentVariable>
+                        </excludedEnvironmentVariables>
                     </configuration>
                 </plugin>
             </plugins>
