@@ -12,7 +12,7 @@ Postgres and pgvector along the way. The obvious way to hold thousands of slow c
 ## Decision
 
 I used Spring MVC with `spring.threads.virtual.enabled=true` on Java 21. Each request gets its own virtual thread and
-the code is plain blocking code: JdbcClient, the JDK HttpClient, Lettuce through the sync API.
+the code is plain blocking code: JdbcClient, the JDK HttpClient and StringRedisTemplate (Lettuce underneath).
 
 For SSE, backpressure is just a blocking flush. `SseStreamSink` writes and flushes each chunk. If the client reads
 slowly, the socket buffer fills, `flush()` blocks, and `StreamSession` stops pulling from the upstream reader. A

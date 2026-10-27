@@ -14,7 +14,7 @@ In one local transaction, the gateway writes a `request_log` row and an `outbox`
 `OutboxRelay` polls the outbox every second in batches of up to 200, sends each batch to `tokengate.usage.v1` keyed
 by tenant, waits for the broker ack, and then marks the rows published. Each payload carries a `schemaVersion`.
 
-The metering service consumes with manual commits. It inserts the event id into `processed_events` and upserts
+The metering service commits offsets per record, after the listener returns. It inserts the event id into `processed_events` and upserts
 `daily_usage` in the same transaction, so a redelivered event changes nothing. When the consumer sees a schema
 version it doesn't understand, it logs the event and skips it.
 
