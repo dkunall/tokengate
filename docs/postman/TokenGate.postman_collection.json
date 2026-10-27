@@ -1,0 +1,886 @@
+{
+  "info": {
+    "name": "TokenGate",
+    "description": "Gateway and metering API checks. Tokens are not stored here: pass adminToken, viewerToken and billingToken with --env-var (see scripts/newman.sh).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "tenantId",
+      "value": ""
+    },
+    {
+      "key": "apiKey",
+      "value": ""
+    },
+    {
+      "key": "keyId",
+      "value": ""
+    },
+    {
+      "key": "today",
+      "value": ""
+    },
+    {
+      "key": "period",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Setup",
+      "item": [
+        {
+          "name": "Gateway health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"UP\", () => pm.expect(pm.response.json().status).to.eql(\"UP\"));"
+                ]
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"runId\", Date.now().toString(36));",
+                  "pm.collectionVariables.set(\"tenantId\", \"pm-\" + pm.collectionVariables.get(\"runId\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/actuator/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create tenant (ADMIN)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"defaults applied\", () => { const t = pm.response.json(); pm.expect(t.routing).to.eql(\"LATENCY\"); pm.expect(t.pii.mode).to.eql(\"TOKENIZE\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/admin/tenants",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{tenantId}}\",\n  \"name\": \"Postman {{runId}}\",\n  \"requests_per_minute\": 120,\n  \"burst\": 20,\n  \"daily_tokens\": 200000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Issue API key (shown once)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "const k = pm.response.json();",
+                  "pm.test(\"plaintext key returned once\", () => pm.expect(k.key).to.match(/^tg_/));",
+                  "pm.collectionVariables.set(\"apiKey\", k.key);",
+                  "pm.collectionVariables.set(\"keyId\", k.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/admin/tenants/{{tenantId}}/keys",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants",
+                "{{tenantId}}",
+                "keys"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List keys shows prefix only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"no plaintext or hash\", () => pm.response.json().forEach(k => { pm.expect(k).to.not.have.property(\"key\"); pm.expect(k).to.not.have.property(\"hash\"); }));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/admin/tenants/{{tenantId}}/keys",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants",
+                "{{tenantId}}",
+                "keys"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "v1",
+      "item": [
+        {
+          "name": "Chat completion",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"OpenAI shape\", () => { const b = pm.response.json(); pm.expect(b.object).to.eql(\"chat.completion\"); pm.expect(b.usage.total_tokens).to.be.above(0); });",
+                  "pm.test(\"gateway headers\", () => { pm.expect(pm.response.headers.get(\"X-TokenGate-Provider\")).to.match(/^mock-/); pm.expect(pm.response.headers.get(\"X-TokenGate-Cache\")).to.eql(\"miss\"); pm.expect(pm.response.headers.has(\"RateLimit-Remaining\")).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/chat/completions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Postman check {{runId}}: what does a token bucket limit?\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Same request again is a cache hit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"served from cache\", () => pm.expect(pm.response.headers.get(\"X-TokenGate-Cache\")).to.match(/hit$/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/chat/completions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Postman check {{runId}}: what does a token bucket limit?\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PII is masked before the provider",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"one value masked\", () => pm.expect(pm.response.headers.get(\"X-TokenGate-Pii-Masked\")).to.eql(\"1\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/chat/completions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Mail me at postman.check@example.com, {{runId}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Embeddings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"two vectors\", () => { const b = pm.response.json(); pm.expect(b.data).to.have.length(2); pm.expect(b.data[0].embedding.length).to.be.above(0); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/embeddings",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "embeddings"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"text-embedding-3-small\",\n  \"input\": [\n    \"token bucket\",\n    \"leaky bucket\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Missing API key is 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"RFC 7807 body\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json()).to.have.property(\"type\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/chat/completions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Postman check {{runId}}: what does a token bucket limit?\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Unknown model is 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"RFC 7807 body\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json()).to.have.property(\"type\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/chat/completions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-9-imaginary\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"hi\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Empty messages is 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"RFC 7807 body\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json()).to.have.property(\"type\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/chat/completions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Budget snapshot",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"tokens counted\", () => pm.expect(pm.response.json().tokens_used_today).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/admin/tenants/{{tenantId}}/budget",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants",
+                "{{tenantId}}",
+                "budget"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Providers",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"mock providers listed\", () => pm.expect(pm.response.json().map(p => p.id)).to.include.members([\"mock-alpha\", \"mock-beta\"]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{viewerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/admin/providers",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "admin",
+                "providers"
+              ]
+            }
+          }
+        },
+        {
+          "name": "VIEWER cannot create tenants",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{viewerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/admin/tenants",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"viewer-{{runId}}\",\n  \"name\": \"nope\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "No token on admin is 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/admin/providers",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "admin",
+                "providers"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Metering",
+      "item": [
+        {
+          "name": "Prices (BILLING)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"versioned prices present\", () => pm.expect(pm.response.json()[0]).to.have.property(\"effective_from\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{billingToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{meteringUrl}}/admin/prices",
+              "host": [
+                "{{meteringUrl}}"
+              ],
+              "path": [
+                "admin",
+                "prices"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Usage for the tenant (waits for Kafka)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"requests aggregated\", () => pm.expect(pm.response.json().days.reduce((n, d) => n + d.requests, 0)).to.be.at.least(3));"
+                ]
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"today\", new Date().toISOString().slice(0, 10));",
+                  "setTimeout(() => {}, 3000);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{billingToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{meteringUrl}}/admin/usage/{{tenantId}}?from={{today}}&to={{today}}",
+              "host": [
+                "{{meteringUrl}}"
+              ],
+              "path": [
+                "admin",
+                "usage",
+                "{{tenantId}}?from={{today}}&to={{today}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Generate invoice",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"draft with lines\", () => { const i = pm.response.json(); pm.expect(i.status).to.eql(\"DRAFT\"); pm.expect(i.lines.length).to.be.above(0); });"
+                ]
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"period\", new Date().toISOString().slice(0, 7));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{billingToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{meteringUrl}}/admin/invoices",
+              "host": [
+                "{{meteringUrl}}"
+              ],
+              "path": [
+                "admin",
+                "invoices"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"period\": \"{{period}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "BILLING cannot change prices",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{billingToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{meteringUrl}}/admin/prices",
+              "host": [
+                "{{meteringUrl}}"
+              ],
+              "path": [
+                "admin",
+                "prices"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+newman
+
+TokenGate
+
+❏ Setup
+↳ Gateway health
+  GET http://localhost:9080/actuator/health [200 OK, 451B, 25ms]
+  ✓  status 200
+  ✓  UP
+
+↳ Create tenant (ADMIN)
+  POST http://localhost:9080/admin/tenants [201 Created, 793B, 11ms]
+  ✓  status 201
+  ✓  defaults applied
+
+↳ Issue API key (shown once)
+  POST http://localhost:9080/admin/tenants/pm-mvqwoy47/keys [201 Created, 638B, 8ms]
+  ✓  status 201
+  ✓  plaintext key returned once
+
+↳ List keys shows prefix only
+  GET http://localhost:9080/admin/tenants/pm-mvqwoy47/keys [200 OK, 527B, 7ms]
+  ✓  status 200
+  ✓  no plaintext or hash
+
+❏ v1
+↳ Chat completion
+  POST http://localhost:9080/v1/chat/completions [200 OK, 912B, 79ms]
+  ✓  status 200
+  ✓  OpenAI shape
+  ✓  gateway headers
+
+↳ Same request again is a cache hit
+  POST http://localhost:9080/v1/chat/completions [200 OK, 910B, 10ms]
+  ✓  status 200
+  ✓  served from cache
+
+↳ PII is masked before the provider
+  POST http://localhost:9080/v1/chat/completions [200 OK, 902B, 87ms]
+  ✓  status 200
+  ✓  one value masked
+
+↳ Embeddings
+  POST http://localhost:9080/v1/embeddings [200 OK, 9.98kB, 157ms]
+  ✓  status 200
+  ✓  two vectors
+
+↳ Missing API key is 401
+  POST http://localhost:9080/v1/chat/completions [401 Unauthorized, 612B, 5ms]
+  ✓  status 401
+  ✓  RFC 7807 body
+
+↳ Unknown model is 404
+  POST http://localhost:9080/v1/chat/completions [404 Not Found, 621B, 9ms]
+  ✓  status 404
+  ✓  RFC 7807 body
+
+↳ Empty messages is 400
+  POST http://localhost:9080/v1/chat/completions [400 Bad Request, 561B, 5ms]
+  ✓  status 400
+  ✓  RFC 7807 body
+
+❏ Admin
+↳ Budget snapshot
+  GET http://localhost:9080/admin/tenants/pm-mvqwoy47/budget [200 OK, 549B, 8ms]
+  ✓  status 200
+  ✓  tokens counted
+
+↳ Providers
+  GET http://localhost:9080/admin/providers [200 OK, 812B, 6ms]
+  ✓  status 200
+  ✓  mock providers listed
+
+↳ VIEWER cannot create tenants
+  POST http://localhost:9080/admin/tenants [403 Forbidden, 577B, 5ms]
+  ✓  status 403
+
+↳ No token on admin is 401
+  GET http://localhost:9080/admin/providers [401 Unauthorized, 604B, 4ms]
+  ✓  status 401
+
+❏ Metering
+↳ Prices (BILLING)
+  GET http://localhost:9081/admin/prices [200 OK, 822B, 7ms]
+  ✓  status 200
+  ✓  versioned prices present
+
+↳ Usage for the tenant (waits for Kafka)
+  GET http://localhost:9081/admin/usage/pm-mvqwoy47?from=2026-10-27&to=2026-10-27 [200 OK, 954B, 9ms]
+  ✓  status 200
+  ✓  requests aggregated
+
+↳ Generate invoice
+  POST http://localhost:9081/admin/invoices [200 OK, 984B, 13ms]
+  ✓  status 200
+  ✓  draft with lines
+
+↳ BILLING cannot change prices
+  POST http://localhost:9081/admin/prices [403 Forbidden, 509B, 5ms]
+  ✓  status 403
+
+┌─────────────────────────┬───────────────────┬──────────────────┐
+│                         │          executed │           failed │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│              iterations │                 1 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│                requests │                19 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│            test-scripts │                19 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│      prerequest-scripts │                 3 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│              assertions │                36 │                0 │
+├─────────────────────────┴───────────────────┴──────────────────┤
+│ total run duration: 5.6s                                       │
+├────────────────────────────────────────────────────────────────┤
+│ total data received: 14.93kB (approx)                          │
+├────────────────────────────────────────────────────────────────┤
+│ average response time: 24ms [min: 4ms, max: 157ms, s.d.: 38ms] │
+└────────────────────────────────────────────────────────────────┘
