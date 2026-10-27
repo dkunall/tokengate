@@ -70,7 +70,7 @@ class MeteringConfig {
     CommonErrorHandler kafkaErrorHandler(MeteringProperties props) {
         DefaultErrorHandler handler = new DefaultErrorHandler(
                 (record, e) -> log.error("skipping usage record {}-{}@{}: {}", record.topic(), record.partition(),
-                        record.offset(), e.getMessage()),
+                        record.offset(), e.getCause() != null ? e.getCause().getMessage() : e.getMessage()),
                 new FixedBackOff(props.retryBackoff().toMillis(), FixedBackOff.UNLIMITED_ATTEMPTS));
         handler.addNotRetryableExceptions(MalformedUsageEvent.class);
         return handler;
