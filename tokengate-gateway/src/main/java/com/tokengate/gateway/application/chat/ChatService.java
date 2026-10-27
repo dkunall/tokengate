@@ -24,6 +24,9 @@ import com.tokengate.gateway.domain.routing.RouteQuery;
 import com.tokengate.gateway.domain.routing.Router;
 import com.tokengate.gateway.domain.tenant.Tenant;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Clock;
 import java.util.List;
 
@@ -33,6 +36,8 @@ import java.util.List;
  * to {@link StreamSession}.
  */
 public final class ChatService {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatService.class);
 
     private final ProviderCatalog catalog;
     private final Router router;
@@ -93,6 +98,8 @@ public final class ChatService {
         Cost cost = served.offer().price().cost(usage);
         admission.settle(route.reservation(), usage.total(), cost);
         String providerId = served.provider().id().value();
+        log.debug("usage {} {}: prompt estimate {} vs reported {}, completion {}, cost {} micros", providerId,
+                raw.providerModel(), p.promptTokens(), usage.promptTokens(), usage.completionTokens(), cost.micros());
         if (p.cacheable()) {
             cache.store(caller.tenantId(), p.masked(), caller.tenant().cache(), p.lookup(),
                     new CachedCompletion(raw.content(), raw.finishReason(), usage, providerId, raw.providerModel(),

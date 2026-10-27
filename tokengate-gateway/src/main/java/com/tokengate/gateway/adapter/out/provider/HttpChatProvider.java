@@ -9,6 +9,8 @@ import com.tokengate.gateway.domain.chat.StreamDelta;
 import com.tokengate.gateway.domain.routing.FailureKind;
 import com.tokengate.gateway.domain.routing.ProviderFailure;
 import com.tokengate.gateway.domain.routing.ProviderId;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -30,6 +32,13 @@ import java.util.concurrent.TimeoutException;
 
 /** HTTP plumbing shared by the provider adapters; subclasses only map JSON in and out. */
 abstract class HttpChatProvider implements ChatProvider {
+
+    /**
+     * Outbound bodies (already PII-masked) and upstream replies, at DEBUG. Only the path and body are logged,
+     * never headers, so API keys sent as headers can't end up here.
+     */
+    protected static final Logger wire = LoggerFactory.getLogger("tokengate.provider.wire");
+    private static final int WIRE_LOG_LIMIT = 4000;
 
     protected final ProviderId id;
     protected final URI baseUrl;
@@ -59,7 +68,9 @@ abstract class HttpChatProvider implements ChatProvider {
     }
 
     protected JsonNode postJson(URI uri, Object body, Duration timeout, String requestId) {
-        HttpRequest request = request(uri, body, timeout, requestId, "application/json");
+        String payload = write(body);
+        HttpRequest request = request(uri, payload, timeout, requestId, "application/json");
+        logOut(uri, payload);
         CompletableFuture<HttpResponse<String>> future =
                 http.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         HttpResponse<String> response;
@@ -77,8 +88,11 @@ abstract class HttpChatProvider implements ChatProvider {
         } catch (ExecutionException e) {
             throw transport(e.getCause());
         }
+        if (wire.isDebugEnabled()) {
+            wire.debug("{} <- {} {}", id, response.statusCode(), clip(response.body()));
+        }
         if (response.statusCode() >= 400) {
-            throw ProviderFailure.http(response.statusCode(), response.body(), retryAfter(response));
+            throw httpFailure(response.statusCode(), response.body(), retryAfter(response));
         }
         try {
             return json.readTree(response.body());
@@ -89,7 +103,9 @@ abstract class HttpChatProvider implements ChatProvider {
     }
 
     protected SseReader openSse(URI uri, Object body, Duration timeout, String requestId) {
-        HttpRequest request = request(uri, body, timeout, requestId, "text/event-stream");
+        String payload = write(body);
+        HttpRequest request = request(uri, payload, timeout, requestId, "text/event-stream");
+        logOut(uri, payload);
         HttpResponse<InputStream> response;
         try {
             response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
@@ -106,7 +122,10 @@ abstract class HttpChatProvider implements ChatProvider {
             } catch (IOException e) {
                 err = "";
             }
-            throw ProviderFailure.http(response.statusCode(), err, retryAfter(response));
+            if (wire.isDebugEnabled()) {
+                wire.debug("{} <- {} {}", id, response.statusCode(), clip(err));
+            }
+            throw httpFailure(response.statusCode(), err, retryAfter(response));
         }
         return new SseReader(response.body());
     }
@@ -153,6 +172,9 @@ abstract class HttpChatProvider implements ChatProvider {
                             }
                             throw new ProviderFailure(FailureKind.MIDSTREAM, id + " closed the stream before it finished");
                         }
+                        if (wire.isTraceEnabled()) {
+                            wire.trace("{} <- event {}", id, clip(event.data()));
+                        }
                         Step step = mapper.map(event);
                         if (step.done()) {
                             finished = true;
@@ -181,6 +203,46 @@ abstract class HttpChatProvider implements ChatProvider {
         };
     }
 
+    /**
+     * Builds the failure for an HTTP error. Most providers wrap errors as {"error":{"message":...}}; that message
+     * is what goes in the problem detail, on one line, instead of the raw (often pretty-printed) body.
+     */
+    protected ProviderFailure httpFailure(int status, String body, Duration retryAfter) {
+        String message = null;
+        if (body != null && !body.isBlank()) {
+            try {
+                JsonNode err = json.readTree(body).path("error");
+                message = err.isTextual() ? err.asText() : text(err, "message");
+            } catch (JsonProcessingException | RuntimeException e) {
+                message = null;
+            }
+        }
+        if (message == null) {
+            return ProviderFailure.http(status, body, retryAfter);
+        }
+        String flat = message.replaceAll("\\s+", " ").trim();
+        if (flat.length() > 300) {
+            flat = flat.substring(0, 300) + "...";
+        }
+        return new ProviderFailure(FailureKind.fromHttpStatus(status), status,
+                id + " returned " + status + ": " + flat, retryAfter, null);
+    }
+
+    private void logOut(URI uri, String payload) {
+        if (wire.isDebugEnabled()) {
+            // path only: a query string could carry a key with some providers
+            wire.debug("{} -> POST {} {}", id, uri.getPath(), clip(payload));
+        }
+    }
+
+    private static String clip(String s) {
+        if (s == null) {
+            return "";
+        }
+        String one = s.replace('\n', ' ').replace('\r', ' ');
+        return one.length() > WIRE_LOG_LIMIT ? one.substring(0, WIRE_LOG_LIMIT) + "...(" + one.length() + " chars)" : one;
+    }
+
     protected String write(Object body) {
         try {
             return json.writeValueAsString(body);
@@ -189,12 +251,12 @@ abstract class HttpChatProvider implements ChatProvider {
         }
     }
 
-    private HttpRequest request(URI uri, Object body, Duration timeout, String requestId, String accept) {
+    private HttpRequest request(URI uri, String payload, Duration timeout, String requestId, String accept) {
         HttpRequest.Builder b = HttpRequest.newBuilder(uri)
                 .timeout(timeout)
                 .header("Content-Type", "application/json")
                 .header("Accept", accept)
-                .POST(HttpRequest.BodyPublishers.ofString(write(body), StandardCharsets.UTF_8));
+                .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8));
         if (requestId != null) {
             b.header("X-Request-Id", requestId);
         }

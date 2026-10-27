@@ -223,6 +223,9 @@ public final class StreamSession {
     private void finishAccounting(UsageEvent.Outcome outcome, TokenUsage usage, String maskedText, String finish) {
         Cost cost = current.offer().price().cost(usage);
         deps.admission().settle(reservation, usage.total(), cost);
+        log.debug("stream usage {} {}: prompt estimate {} vs reported {}, completion {}, cost {} micros",
+                current.provider().id().value(), current.offer().nativeModel(), ctx.promptTokens(),
+                usage.promptTokens(), usage.completionTokens(), cost.micros());
         String providerId = current.provider().id().value();
         if (outcome == UsageEvent.Outcome.OK && ctx.cacheable()) {
             deps.cache().store(ctx.caller().tenantId(), ctx.masked(), ctx.caller().tenant().cache(), ctx.lookup(),

@@ -99,6 +99,22 @@ class ProviderContractTest {
                 base(), FAKE_KEY, true, HTTP, JSON, Duration.ofSeconds(2));
 
         @Test
+        void errorBodyMessageIsUsedWhenThereIsOneAndTheRawBodyWhenNot() {
+            wm.stubFor(post("/chat/completions").willReturn(aResponse().withStatus(400)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"error\":{\"message\":\"bad\\n  temperature\",\"type\":\"invalid_request_error\"}}")));
+            assertThatThrownBy(() -> provider.complete(call(false))).isInstanceOfSatisfying(ProviderFailure.class,
+                    f -> assertThat(f.getMessage()).isEqualTo("openai returned 400: bad temperature"));
+
+            wm.stubFor(post("/chat/completions").willReturn(aResponse().withStatus(502).withBody("<html>bad gateway</html>")));
+            assertThatThrownBy(() -> provider.complete(call(false))).isInstanceOfSatisfying(ProviderFailure.class,
+                    f -> {
+                        assertThat(f.kind()).isEqualTo(FailureKind.SERVER_ERROR);
+                        assertThat(f.getMessage()).contains("502").contains("bad gateway");
+                    });
+        }
+
+        @Test
         void sendsChatCompletionsShapeAndReadsUsage() {
             wm.stubFor(post("/chat/completions").willReturn(okJson("""
                     {"id":"chatcmpl-1","model":"native-model-0613",
@@ -276,26 +292,131 @@ class ProviderContractTest {
         private final GeminiProvider provider = new GeminiProvider(ProviderId.of("gemini"), base(), FAKE_KEY, HTTP,
                 JSON, Duration.ofSeconds(2));
 
+        // Fixtures below follow what generativelanguage.googleapis.com returned for gemini-3.5-flash-lite on
+        // 2026-10-27 (see docs/real-providers.md); only the thought signatures and response ids are shortened.
         @Test
         void sendsContentsAndSystemInstructionAndReadsUsageMetadata() {
             wm.stubFor(post("/v1beta/models/native-model:generateContent").willReturn(okJson("""
-                    {"candidates":[{"content":{"role":"model","parts":[{"text":"Hi"},{"text":"."}]},
-                     "finishReason":"STOP"}],
-                     "usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":2,"totalTokenCount":10},
-                     "modelVersion":"gemini-x-001"}""")));
+                    {
+                      "candidates": [
+                        {
+                          "content": {
+                            "parts": [ { "text": "Paris", "thoughtSignature": "EmAKXgFpFH0T" } ],
+                            "role": "model"
+                          },
+                          "finishReason": "STOP",
+                          "index": 0
+                        }
+                      ],
+                      "usageMetadata": {
+                        "promptTokenCount": 14,
+                        "candidatesTokenCount": 1,
+                        "totalTokenCount": 15,
+                        "promptTokensDetails": [ { "modality": "TEXT", "tokenCount": 14 } ],
+                        "serviceTier": "standard"
+                      },
+                      "modelVersion": "gemini-3.5-flash-lite",
+                      "responseId": "uuzgatu6HvOC"
+                    }""")));
 
             ChatCompletion c = provider.complete(call(false));
 
-            assertThat(c.content()).isEqualTo("Hi.");
+            assertThat(c.content()).isEqualTo("Paris");
             assertThat(c.finishReason()).isEqualTo("stop");
-            assertThat(c.usage().promptTokens()).isEqualTo(8);
-            assertThat(c.usage().completionTokens()).isEqualTo(2);
+            assertThat(c.usage().promptTokens()).isEqualTo(14);
+            assertThat(c.usage().completionTokens()).isEqualTo(1);
+            assertThat(c.providerModel()).isEqualTo("gemini-3.5-flash-lite");
             wm.verify(postRequestedFor(urlEqualTo("/v1beta/models/native-model:generateContent"))
                     .withHeader("x-goog-api-key", equalTo(FAKE_KEY))
                     .withRequestBody(equalToJson("""
                             {"systemInstruction":{"parts":[{"text":"be brief"}]},
                              "contents":[{"role":"user","parts":[{"text":"hello"}]}],
                              "generationConfig":{"temperature":0.0,"maxOutputTokens":64,"stopSequences":["END"]}}""")));
+        }
+
+        @Test
+        void thinkingTokensAreBilledAsCompletionAndThoughtPartsAreNotContent() {
+            wm.stubFor(post("/v1beta/models/native-model:generateContent").willReturn(okJson("""
+                    {"candidates":[{"content":{"role":"model","parts":[
+                        {"text":"let me think","thought":true},{"text":"42"}]},"finishReason":"STOP"}],
+                     "usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"thoughtsTokenCount":30,
+                                      "totalTokenCount":42}}""")));
+
+            ChatCompletion c = provider.complete(call(false));
+
+            assertThat(c.content()).isEqualTo("42");
+            assertThat(c.usage().completionTokens()).isEqualTo(32);
+        }
+
+        @Test
+        void maxTokensCutOffWithNoCandidateTokensIsLengthWithZeroCompletion() {
+            // what a 1-token limit really returns: empty text and no candidatesTokenCount at all
+            wm.stubFor(post("/v1beta/models/native-model:generateContent").willReturn(okJson("""
+                    {"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"MAX_TOKENS",
+                      "index":0}],
+                     "usageMetadata":{"promptTokenCount":9,"totalTokenCount":9,
+                      "promptTokensDetails":[{"modality":"TEXT","tokenCount":9}],"serviceTier":"standard"},
+                     "modelVersion":"gemini-3.5-flash-lite","responseId":"ae3gatS4"}""")));
+
+            ChatCompletion c = provider.complete(call(false));
+
+            assertThat(c.content()).isEmpty();
+            assertThat(c.finishReason()).isEqualTo("length");
+            assertThat(c.usage().promptTokens()).isEqualTo(9);
+            assertThat(c.usage().completionTokens()).isZero();
+        }
+
+        @Test
+        void retiredOrUnknownModelFailsOverWithGooglesMessageOnOneLine() {
+            wm.stubFor(post("/v1beta/models/native-model:generateContent").willReturn(aResponse().withStatus(404)
+                    .withHeader("Content-Type", "application/json").withBody("""
+                    {
+                      "error": {
+                        "code": 404,
+                        "message": "This model models/native-model is no longer available to new users.",
+                        "status": "NOT_FOUND"
+                      }
+                    }
+                    """)));
+
+            assertThatThrownBy(() -> provider.complete(call(false))).isInstanceOfSatisfying(ProviderFailure.class,
+                    f -> {
+                        assertThat(f.kind()).isEqualTo(FailureKind.NOT_FOUND);
+                        assertThat(f.kind().failover()).isTrue();
+                        assertThat(f.getMessage()).isEqualTo(
+                                "gemini returned 404: This model models/native-model is no longer available to new users.");
+                    });
+        }
+
+        @Test
+        void wireLogHasTheMaskedBodyButNeverTheKey() {
+            ch.qos.logback.classic.Logger wire =
+                    (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("tokengate.provider.wire");
+            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> seen =
+                    new ch.qos.logback.core.read.ListAppender<>();
+            seen.start();
+            ch.qos.logback.classic.Level before = wire.getLevel();
+            wire.setLevel(ch.qos.logback.classic.Level.TRACE);
+            wire.addAppender(seen);
+            try {
+                wm.stubFor(post(urlPathEqualTo("/v1beta/models/native-model:streamGenerateContent"))
+                        .willReturn(aResponse().withHeader("Content-Type", "text/event-stream").withBody(sse(
+                                "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"hi\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}]}"))));
+                drain(provider.openStream(call(true)));
+            } finally {
+                wire.detachAppender(seen);
+                wire.setLevel(before);
+            }
+
+            List<String> lines = seen.list.stream().map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                    .toList();
+            assertThat(lines).anySatisfy(l -> assertThat(l)
+                    .startsWith("gemini -> POST /v1beta/models/native-model:streamGenerateContent {")
+                    .contains("\"text\":\"hello\""));
+            assertThat(lines).anySatisfy(l -> assertThat(l).startsWith("gemini <- event"));
+            assertThat(lines).noneSatisfy(l -> assertThat(l).containsIgnoringCase(FAKE_KEY));
+            assertThat(lines).noneSatisfy(l -> assertThat(l).containsIgnoringCase("x-goog-api-key"));
+            assertThat(lines).noneSatisfy(l -> assertThat(l).contains("alt=sse"));
         }
 
         @Test
@@ -311,17 +432,23 @@ class ProviderContractTest {
 
         @Test
         void streamsUntilFinishReason() {
+            // Gemini repeats cumulative usageMetadata on every chunk and closes with an empty text part that
+            // carries the finishReason (and a thought signature)
             wm.stubFor(post(urlPathEqualTo("/v1beta/models/native-model:streamGenerateContent")).willReturn(aResponse()
                     .withHeader("Content-Type", "text/event-stream")
                     .withBody(sse(
-                            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hel\"}]}}]}",
-                            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"lo\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":8,\"candidatesTokenCount\":2}}"))));
+                            "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"1,\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 13,\"candidatesTokenCount\": 2,\"totalTokenCount\": 15,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 13}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.5-flash-lite\",\"responseId\": \"F-3gaovz\"}",
+                            "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" 2, 3, 4, 5\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 13,\"candidatesTokenCount\": 13,\"totalTokenCount\": 26,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 13}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.5-flash-lite\",\"responseId\": \"F-3gaovz\"}",
+                            "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\",\"thoughtSignature\": \"EmAKXgFpFH0T\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 13,\"candidatesTokenCount\": 13,\"totalTokenCount\": 26,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 13}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.5-flash-lite\",\"responseId\": \"F-3gaovz\"}"))));
 
             List<StreamDelta> deltas = drain(provider.openStream(call(true)));
 
-            assertThat(deltas).extracting(StreamDelta::content).containsExactly("Hel", "lo");
-            assertThat(deltas.get(1).finishReason()).isEqualTo("stop");
-            assertThat(deltas.get(1).usage().completionTokens()).isEqualTo(2);
+            assertThat(deltas).extracting(StreamDelta::content).containsExactly("1,", " 2, 3, 4, 5", null);
+            StreamDelta last = deltas.get(deltas.size() - 1);
+            assertThat(last.finishReason()).isEqualTo("stop");
+            assertThat(last.usage().promptTokens()).isEqualTo(13);
+            assertThat(last.usage().completionTokens()).isEqualTo(13);
+            wm.verify(postRequestedFor(urlEqualTo("/v1beta/models/native-model:streamGenerateContent?alt=sse")));
         }
 
         @Test
@@ -338,13 +465,21 @@ class ProviderContractTest {
 
         @Test
         void batchEmbeddings() {
-            wm.stubFor(post("/v1beta/models/text-embedding-004:batchEmbedContents").willReturn(okJson("""
-                    {"embeddings":[{"values":[0.5,0.25]},{"values":[0.1,0.9]}]}""")));
-            EmbeddingResult r = provider.embed("text-embedding-004", List.of("a", "b"), Duration.ofSeconds(2));
+            // gemini-embedding-2 answers batchEmbedContents with 3072 values per input and no usage block
+            wm.stubFor(post("/v1beta/models/gemini-embedding-2:batchEmbedContents").willReturn(okJson("""
+                    {
+                      "embeddings": [
+                        { "values": [ -0.007190489, 0.016610544, 0.023724955 ] },
+                        { "values": [ 0.1, 0.9, -0.2 ] }
+                      ]
+                    }""")));
+            EmbeddingResult r = provider.embed("gemini-embedding-2", List.of("a", "b"), Duration.ofSeconds(2));
             assertThat(r.vectors()).hasSize(2);
-            assertThat(r.vectors().get(0)[0]).isEqualTo(0.5f);
-            wm.verify(postRequestedFor(urlEqualTo("/v1beta/models/text-embedding-004:batchEmbedContents"))
-                    .withRequestBody(matchingJsonPath("$.requests[1].model", equalTo("models/text-embedding-004"))));
+            assertThat(r.vectors().get(0)[0]).isEqualTo(-0.007190489f);
+            assertThat(r.usage().total()).isZero();
+            wm.verify(postRequestedFor(urlEqualTo("/v1beta/models/gemini-embedding-2:batchEmbedContents"))
+                    .withHeader("x-goog-api-key", equalTo(FAKE_KEY))
+                    .withRequestBody(matchingJsonPath("$.requests[1].model", equalTo("models/gemini-embedding-2"))));
         }
     }
 }
