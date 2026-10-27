@@ -103,7 +103,7 @@ tokengate:
   cache:
     l1-capacity: 10000
     l1-ttl: 30s
-    semantic-purge-interval: 10m
+    semantic-purge-interval: PT10M
   embedding:
     model-dir: ${TOKENGATE_EMBEDDING_MODEL_DIR:}
     max-sequence-length: 256
@@ -120,7 +120,7 @@ tokengate:
       issuer: tokengate-dev
   usage:
     topic: tokengate.usage.v1
-    outbox-interval: 1s
+    outbox-interval: PT1S  # ISO-8601 because @Scheduled reads it directly
     outbox-batch: 200
     kafka-ack-timeout: 5s
 

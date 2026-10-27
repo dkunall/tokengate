@@ -16,6 +16,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -49,9 +50,9 @@ public class ChatCompletionsController {
     @Operation(summary = "OpenAI-compatible chat completion; set stream=true for server-sent events")
     @PostMapping(path = "/chat/completions", consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = {MediaType.APPLICATION_JSON_VALUE, MediaType.TEXT_EVENT_STREAM_VALUE})
-    public ResponseEntity<?> complete(@AuthenticationPrincipal Caller caller,
-                                      @RequestBody ChatCompletionRequest body,
-                                      HttpServletRequest http) {
+    public Object complete(@AuthenticationPrincipal Caller caller,
+                           @RequestBody ChatCompletionRequest body,
+                           HttpServletRequest http, HttpServletResponse response) {
         String requestId = RequestIdFilter.of(http);
         ChatRequest request = body.toDomain();
         long created = clock.instant().getEpochSecond();
@@ -61,11 +62,15 @@ public class ChatCompletionsController {
             StreamSession session = chat.openStream(caller, requestId, request);
             HttpHeaders h = served(session.provider(), session.cache(), 0, session.attempts(), session.rateLimit(),
                     session.piiMasked());
-            h.setCacheControl("no-cache");
             h.set("X-Accel-Buffering", "no");
+            // Returned bare rather than inside a ResponseEntity: MVC picks the streaming handler from the runtime
+            // type only when the declared type does not hide it behind a wildcard.
+            h.forEach((name, values) -> values.forEach(v -> response.addHeader(name, v)));
+            response.setContentType(MediaType.TEXT_EVENT_STREAM_VALUE);
+            response.setCharacterEncoding("UTF-8");
             StreamingResponseBody stream = out ->
                     session.pump(new SseStreamSink(out, json, id, created, session.model()));
-            return ResponseEntity.ok().headers(h).contentType(MediaType.TEXT_EVENT_STREAM).body(stream);
+            return stream;
         }
 
         ChatResult r = chat.complete(caller, requestId, request);

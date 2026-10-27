@@ -29,7 +29,7 @@ class BackgroundJobs {
         this.catalog = catalog;
     }
 
-    @Scheduled(fixedDelayString = "${tokengate.usage.outbox-interval:1s}")
+    @Scheduled(fixedDelayString = "${tokengate.usage.outbox-interval:PT1S}")
     void relayOutbox() {
         int published;
         do {
@@ -37,7 +37,7 @@ class BackgroundJobs {
         } while (published > 0 && !Thread.currentThread().isInterrupted());
     }
 
-    @Scheduled(fixedDelayString = "${tokengate.cache.semantic-purge-interval:10m}", initialDelayString = "1m")
+    @Scheduled(fixedDelayString = "${tokengate.cache.semantic-purge-interval:PT10M}", initialDelayString = "PT1M")
     void purgeSemanticCache() {
         try {
             int removed = semantic.purgeExpired();
@@ -50,7 +50,7 @@ class BackgroundJobs {
     }
 
     // other replicas may have changed weights/enabled through the admin API
-    @Scheduled(fixedDelayString = "${tokengate.routing.catalog-refresh:15s}", initialDelayString = "15s")
+    @Scheduled(fixedDelayString = "${tokengate.routing.catalog-refresh:PT15S}", initialDelayString = "PT15S")
     void refreshProviderOverrides() {
         try {
             catalog.refresh();

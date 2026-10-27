@@ -20,7 +20,7 @@ logs/
 *.key
 
 # downloaded by scripts/fetch-model.sh, ~90 MB
-/models/
+/models
 
 # scripts/local.sh runtime state
 /.run/
