@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <springProperty scope="context" name="app" source="spring.application.name"/>
+
+    <!-- plain text with the "dev-console" profile, JSON everywhere else -->
+    <springProfile name="dev-console">
+        <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="!dev-console">
+        <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+                <providers>
+                    <timestamp><fieldName>ts</fieldName><timeZone>UTC</timeZone></timestamp>
+                    <logLevel><fieldName>level</fieldName></logLevel>
+                    <loggerName><fieldName>logger</fieldName><shortenedLoggerNameLength>36</shortenedLoggerNameLength></loggerName>
+                    <threadName><fieldName>thread</fieldName></threadName>
+                    <mdc>
+                        <includeMdcKeyName>requestId</includeMdcKeyName>
+                        <includeMdcKeyName>traceId</includeMdcKeyName>
+                        <includeMdcKeyName>spanId</includeMdcKeyName>
+                    </mdc>
+                    <pattern><pattern>{"app":"${app}"}</pattern></pattern>
+                    <message/>
+                    <stackTrace>
+                        <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                            <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                            <rootCauseFirst>true</rootCauseFirst>
+                        </throwableConverter>
+                    </stackTrace>
+                </providers>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="JSON"/>
+        </root>
+    </springProfile>
+</configuration>

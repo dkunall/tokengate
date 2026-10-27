@@ -1,0 +1,69 @@
+server:
+  port: ${METERING_PORT:9081}
+  shutdown: graceful
+
+spring:
+  application:
+    name: tokengate-metering
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  datasource:
+    url: ${METERING_DB_URL:jdbc:postgresql://localhost:55442/tokengate_metering}
+    username: ${METERING_DB_USER:tokengate}
+    password: ${METERING_DB_PASSWORD:tokengate}
+    hikari:
+      maximum-pool-size: 10
+  flyway:
+    enabled: true
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    generator:
+      write-bigdecimal-as-plain: true
+    deserialization:
+      fail-on-unknown-properties: false
+  kafka:
+    bootstrap-servers: ${METERING_KAFKA:localhost:9094}
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      properties:
+        isolation.level: read_committed
+    listener:
+      ack-mode: record
+      concurrency: 3
+
+tokengate:
+  metering:
+    consumer-group: ${METERING_CONSUMER_GROUP:tokengate-metering}
+    price-cache-ttl: 30s
+    retry-backoff: 2s
+    jwt:
+      issuer: ${TOKENGATE_JWT_ISSUER:tokengate-dev}
+      issuer-uri: ${TOKENGATE_JWT_ISSUER_URI:}
+      hmac-secret: ${TOKENGATE_JWT_HMAC_SECRET:dev-only-jwt-hmac-secret-00000000000000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+  metrics:
+    tags:
+      application: tokengate-metering
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
